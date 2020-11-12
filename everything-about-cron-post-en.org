@@ -1,0 +1,601 @@
+https://habr.com/en/company/badoo/blog/468061/
+* Cron in Linux: history, use and structure
+  There is an age-old classical saying that happy people don’t watch the clock. There
+  weren’t any programmers or Unix operating systems in those pre-civilisation times, but
+  in our day programmers know for sure that cron is watching the clock for them.
+
+  For me, command line utilities are both a passion and a daily routine. sed, awk, wc, cut
+  and other old programs are run on our servers every day. Many of them are set up in
+  terms of cron jobs, a scheduler that dates back to the 1970s.
+
+  For a long time, I used cron in nothing more than a superficial way; I never went into
+  the details. But one day, coming across an error while running a script, I decided I
+  would get to the bottom of things. That is how this article came to be written and how,
+  in the writing of it, I got to know POSIX crontab, the versions of cron in Linux
+  distributions and what some of them consist of.
+
+  Do you use Linux and run programs through crontabs? Are you interested in the
+  architecture of system applications in Unix? Then, let’s get started!
+
+** Origin of the species
+
+   Periodically running user or system programs is a necessity on all operating systems.
+   So, the need for services which allow you to schedule and run periodic tasks centrally
+   is something programmers have recognised for a very long time.
+
+   Unix-like operating systems trace their genealogy back to Version 7 Unix, developed in
+   the 1970s at Bell Labs with the involvement of the well-known Ken Thompson. And cron, a
+   service for regularly running tasks (aka cron jobs) by a superuser, was already present
+   on Version 7 Unix.
+
+   A typical cron nowadays is by no means a horribly complex program, but the original
+   version’s work algorithm was even simpler: the service woke up once a minute, read the
+   table with the jobs from a single file (/etc/lib/crontab) and executed the programs
+   that had to be run for that minute on behalf of the superuser.
+
+   Eventually, improved versions of this useful service came along, together with all
+   Unix-like operating systems.
+
+   In 1992 generalised descriptions of the crontab format and basic operating principles
+   of the utility were included in the main standard for Unix-like operating systems —
+   POSIX — and thus cron went from being the de facto standard, to being the de jure
+   standard.
+
+   In 1987 Paul Vixie, having canvassed Unix users for suggestions in relation to cron,
+   released another version of the daemon, resolving some problems encountered previously
+   with traditional crons and expanding the syntax of job table files (cron tables, or
+   crontabs).
+
+   By the third version, Vixie cron starts to meet the requirements of POSIX. Notably, the
+   program has a very liberal licence: the author provides no warranties, you must not
+   delete the name of the author and nor sell the program without source code. These
+   requirements turned out to be compatible with the principles of free software, becoming
+   popular at that time, so key Linux distributions of the early 1990s adopted Vixie cron
+   as part of their system. They have been developing it further to the present day.
+
+   In particular, Red Hat and SUSE have been developing a fork from Vixie cron, namely
+   cronie, while Debian and Ubuntu still consist of the original edition but with lots of
+   patches.
+
+   To start off with, we will familiarise ourselves with the user utility crontab,
+   described in POSIX. Next, we will explore the syntax extensions as offered in Vixie
+   cron, and the use of variations of Vixie cron in popular Linux distributions. And,
+   finally, we will look at the design of the cron daemon itself.
+
+** POSIX crontab
+
+   The original cron always executed jobs as a superuser. But, more often than not,
+   today’s schedulers are dealing with jobs meant to be run as unprivileged users – which
+   is less risky.
+
+   Cron is typically delivered as a package consisting of two programs: a daemon and a
+   crontab utility available for users. The latter allows you to edit tables of jobs
+   specific to each user on the system; the daemon runs tasks from all the user tables and
+   the system table.
+
+   The POSIX standard does not describe the behaviour of the daemon at all and only
+   formalises the user program, crontab. The existence of mechanisms for running user jobs
+   is, of course, assumed but is not described in detail.
+
+   Here are four things you can do using the crontab utility:
+
+   #+begin_example
+   crontab -e # edit table of tasks
+   crontab -l # show table of tasks
+   crontab -r # delete table of tasks
+   crontab path/to/file.crontab # load table of jobs from file
+   #+end_example
+
+   When you call crontab -e the editor specified in the standard environment variable,
+   EDITOR, will be used.
+
+   The jobs themselves are described in the following form:
+
+   #+begin_example
+   # comment lines are ignored
+   #
+   # task to be performed every minute
+   * * * * * * /path/to/exec -a -b -c
+   # task performed at 10th minute after each hour
+   10 * * * * /path/to/exec -a -b -c
+   # task to be performed at the 10th minute of every other hour each day and using standard output stream redirection
+   10 2 * * * /path/to/exec -a -b -c > /tmp/cron-job-output.log
+   #+end_example
+
+   The first five fields of entries are as follows: minutes [1..60], hours [0..23], days
+   of the month [1..31], months [1..12] and days of the week [0..6] – where 0 is Sunday.
+   The final, sixth field is a line which will be executed using a standard shell. In the
+   first five fields values may be listed, interspaced with a comma:
+
+   #+begin_example
+   # job to be performed at the first and tenth minute of every hour
+   1,10 * * * * /path/to/exec -a -b -c
+   or with a hyphen:
+   # job to be performed at each of the first ten minutes of every hour
+   0-9 * * * * /path/to/exec -a -b -c
+   #+end_example
+
+
+   User access to job scheduling is regulated by POSIX using cron.allow and cron.deny
+   files, which list users with access to crontab and users without access to the program,
+   respectively. The standard does not stipulate where these files are to be located.
+
+   According to the standard, at least four environment variables need to be sent to
+   programs being run:
+
+   1. HOME — user’s home directory.
+
+   2. LOGNAME — user login.
+
+   3. PATH — path by which you can find the system’s standard utilities.
+
+   4. SHELL — path to the command interpreter used.
+
+   It should be noted that POSIX says nothing about where the values for these variables
+   come from.
+
+** Sales hit — Vixie cron 3.0pl1
+
+   All popular versions of cron derive from Vixie cron 3.0pl1, posted on comp.sources.unix
+   in 1992. We will consider the main capabilities of this version in more detail below.
+
+   Vixie cron is delivered as two programs (cron and crontab). As usual, the daemon is
+   responsible for reading and running jobs from the system job table and individual
+   users’ tables of jobs, while the crontab utility edits user tables.
+
+*** Job tables and configuration files
+
+    The superuser (system) cron job table is to be found in /etc/crontab. The syntax of
+    the system table corresponds to the syntax of Vixie cron, modified so that its sixth
+    column specifies the name of the user on whose behalf the job is run:
+
+    #+begin_example
+    # Runs every minute on behalf of user vlad
+    * * * * * vlad /path/to/exec
+    #+end_example
+
+    Users’ cron job table is to be found at var/cron/tabs/username and uses common syntax.
+    When running the crontab utility on behalf of a user, it is these files which are
+    edited.
+
+    Lists of users with access to crontab are managed in the /var/cron/allow and
+    /var/cron/deny files; all you need to do is enter the name of the user, on a separate
+    line.
+
+*** Extended syntax
+
+    Compared with POSIX crontab, Paul Vixie’s solution contains several very useful
+    modifications to the syntax of the utility’s job table.
+
+    Now it’s possible to specify days of the week or months by their name (Mon, Tue etc.):
+
+    #+begin_example
+    # Runs every minute on Mondays and Tuesdays in January
+    * * * Jan Mon,Tue /path/to/exec
+    #+end_example
+
+    You can also specify the increment with which tasks run:
+
+    #+begin_example
+    # Runs with a two minute increment
+    */2 * * * Mon,Tue /path/to/exec
+    #+end_example
+
+    Increments and intervals can be combined:
+
+    #+begin_example
+    # Runs with an increment of two minutes for the first ten minutes of every hour
+    0-10/2 * * * * /path/to/exec
+    #+end_example
+
+    And intuitive alternatives to ordinary syntax are supported (reboot, yearly, annually,
+    monthly, weekly, daily, midnight, hourly):
+
+    #+begin_example
+    # Runs after system reboot
+    @reboot /exec/on/reboot
+    # Runs once a day
+    @daily /exec/daily
+    # Runs once an hour
+    @hourly /exec/daily
+    #+end_example
+
+*** Environment in which tasks are performed
+
+    Vixie cron allows you to change the environment in which the applications are run.
+
+    The environment variables USER, LOGNAME and HOME are not just provided by the daemon, but
+    are taken from the passwd file. The PATH variable is given the "/usr/bin:/bin" value, and
+    SHELL the value “/bin/sh". The values of all the variables except from LOGNAME can be
+    changed in the users’ tables.
+
+    Some environment variables (above all, SHELL and HOME) are used by cron itself to run a
+    job. This is what it might look like if you use bash instead of the standard sh for
+    running user jobs:
+
+    #+begin_example
+    SHELL=/bin/bash
+    HOME=/tmp/
+    # exec will be run by bash in /tmp/
+    * ** * * * /path/to/exec
+    #+end_example
+
+    At the end of the day, all the environment variables defined in the table (either used
+    by cron or necessary for the process) will be sent to the job which has been launched.
+
+    When editing the files using the crontab utility, the editor specified in the VISUAL
+    or EDITOR environment variable is used. Should these variables not be defined in the
+    environment in which crontab was launched, then "/usr/ucb/vi" (ucb denotes University
+    of California, Berkeley) is used.
+
+** cron on Debian and Ubuntu
+
+   The developers of Debian and derivative distributions use a heavily modified version of
+   Vixie cron 3.0pl1. There is no difference between the syntax of the table files; for
+   users, it is the same Vixie cron. New capabilities: syslog, SELinux and PAM support.
+
+   A less obvious but tangible change is where the configuration files and job tables are
+   located.
+
+   User tables on Debian are situated in the /var/spool/cron/crontabs directory, while the
+   system table is in the same place, namely in /etc/crontab. Job tables specific to
+   Debian packages are located at /etc/cron.d; this is where the cron daemon automatically
+   reads them from. User access is regulated by the files /etc/cron.allow and
+   /etc/cron.deny.
+
+   The default shell used remains /bin/sh. A small POSIX-compliant shell, dash, which runs
+   without reading any configuration (in non-interactive mode), acts in this capacity on
+   Debian.
+
+   Debian is run via systemd in the most recent versions of cron, while the run
+   configuration may be viewed at /lib/systemd/system/cron.service. There is nothing
+   special about the service configuration, any more finely tuned job management can be
+   performed using environment variables declared directly in each of the users’ crontab.
+
+** cronie in RedHat, Fedora and CentOS
+
+   cronie is a fork of Vixie cron version 4.1. As is the case on Debian, the syntax is
+   unchanged but support for PAM and SELinux, work in a clustered environment, file
+   tracking using inotify and other capabilities, have been added.
+
+   The default configuration is located in the usual places: the system table at
+   /etc/crontab, packages place their tables at /etc/cron.d and user tables fall into
+   /var/spool/cron/crontabs.
+
+   The daemon is run under the control of systemd and the service configuration is
+   /lib/systemd/system/crond.service.
+
+   When run in RedHat-based distributions the default is to use /bin/sh, which is a
+   standard bash. When running cron jobs via /bin/sh, the bash shell is run in a
+   POSIX-compliant mode and does not read any additional configuration, i.e. it works in a
+   non-interactive mode.
+
+** cronie in SLES and openSUSE
+
+   The German distribution SLES, and its derivative openSUSE, use the same cronie as
+   RedHat. The daemon here is also run under systemd and the service configuration is at
+   /usr/lib/systemd/system/cron.service. Configuration: /etc/crontab, /etc/cron.d,
+   /var/spool/cron/tabs. The same bash, run in a POSIX-compliant non-interactive mode,
+   acts in the capacity of /bin/sh.
+
+** Design of Vixie cron
+
+   Today’s descendants of cron have not changed radically from Vixie cron, but they have
+   acquired some new capabilities, although these are not required when it comes to
+   understanding the principles of how the program works. Many of these extensions have
+   been put together carelessly and the code is confusing. The original cron source code
+   as written by Paul Vixie is a delight to read.
+
+   For this reason, I have opted to explore the code of cron based on the common ancestor
+   of both branches of cron development, namely Vixie cron 3.0pl1. I will both simplify
+   the examples, removing the ifdefs which make it more complicated to read and omit
+   secondary details.
+
+   The work of the daemon can be split into several aspects:
+
+   1. Initialisation of the program
+
+   2. Collecting and updating the list of jobs to be run
+
+   3. Cron’s main loop
+
+   4. Executing a single cron job.
+
+   Let’s look at these one at the time.
+
+*** Initialisation
+
+    When it is run, after having verified the process arguments, cron sets up the signal
+    handlers, SIGCHLD and SIGHUP. The former logs an entry to the effect that the work of the
+    child process has been completed; the latter closes the file descriptor of the log file.
+
+    #+begin_src c
+    signal(SIGCHLD, sigchld_handler);
+    signal(SIGHUP, sighup_handler);
+    #+end_src
+
+    The cron daemon always works as a superuser and from the main cron directory. The
+    following calls create a lock file with a PID of the daemon, verify that the user is
+    correct and change the current directory to the main one:
+
+    #+begin_src c
+    acquire_daemonlock(0);
+    set_cron_uid();
+    set_cron_cwd();
+    The default path, to be used when running subprocesses, is set:
+    setenv("PATH", _PATH_DEFPATH, 1);
+    #+end_src
+
+    The process is then ‘daemonised’: it creates a child copy of the process by calling fork
+    and a new session in the child process (calling setsid). There is no further need for the
+    parent process, so it shuts down:
+
+    #+begin_src c
+    switch (fork()) {
+    case -1:
+            /* critical error and shut down */
+            exit(0);
+    break;
+    case 0:
+            /* child process */
+            (void) setsid();
+    break;
+    default:
+            /* parent process shuts down */
+            _exit(0);
+    }
+    #+end_src
+
+    The parent process shutting down releases the lock in the lock file. What’s more, the PID
+    in the file needs to be updated with the child one. After this the database of tasks is
+    populated:
+
+    #+begin_src c
+    /* reacquire пlock */
+    acquire_daemonlock(0);
+
+   /* Populate database  */
+    database.head = NULL;
+    database.tail = NULL;
+    database.mtime = (time_t) 0;
+    load_database(&database);
+    #+end_src
+
+    And cron then moves on to the main work loop. However, first it is worth taking a look
+    at job list loading.
+
+***  Collecting and updating the job list
+
+    The load_database function is responsible for loading the list of jobs. This checks
+    the main system crontab and the directory with user tables. If the files and directory
+    have not changed, the list of jobs will not be re-read. Otherwise, a new job list will
+    be built.
+
+    Loading the system file with special file and table names:
+
+    #+begin_src c
+    /* if the system table file has changed, it will be re-read */
+    if (syscron_stat.st_mtime) {
+            process_crontab("root", "*system*",
+            SYSCRONTAB, &syscron_stat,
+            &new_db, old_db);
+    }
+    #+end_src
+
+    Loading user tables in a loop:
+
+    #+begin_src c
+    while (NULL != (dp = readdir(dir))) {
+            char        fname[MAXNAMLEN+1],
+                    tabname[MAXNAMLEN+1];
+            /* no need to read files with a dot */
+            if (dp->d_name[0] == '.')
+                    continue;
+            (void) strcpy(fname, dp->d_name);
+            sprintf(tabname, CRON_TAB(fname));
+            process_crontab(fname, fname, tabname,
+                            &statbuf, &new_db, old_db);
+    }
+    #+end_src
+
+    Once this has been done the old database will be replaced by a new one.
+
+    In the examples above, calling the process_crontab function verifies the existence of
+    a user corresponding to the table file name (unless it is the superuser). Next,
+    load_user is called. The latter reads the file itself line-by-line:
+
+    #+begin_src c
+    while ((status = load_env(envstr, file)) >= OK) {
+            switch (status) {
+            case ERR:
+                free_user(u);
+                u = NULL;
+                goto done;
+            case FALSE:
+                e = load_entry(file, NULL, pw, envp);
+                if (e) {
+                    e->next = u->crontab;
+                    u->crontab = e;
+                }
+                break;
+            case TRUE:
+                envp = env_set(envp, envstr);
+                break;
+            }
+    }
+    #+end_src
+
+    here either the environment variable is displayed (lines in the form =VAR=value=) using the
+    =load_env / env_set= functions, or the task description is read (=* * * * * /path/to/exec=)
+    using the load_entry functions.
+
+    the entry entity, which returns load_entry, is our task – to be placed in the general list
+    of jobs. Lengthy time format parsing is performed within the function itself, but we are
+    more interested in the derivation of environment variables and parameters for running the
+    task:
+
+    #+begin_src c
+    /* user and group for running the job are taken from passwd*/
+    e->uid = pw->pw_uid;
+    e->gid = pw->pw_gid;
+
+    /* default shell (/bin/sh), if the user has not specified otherwise */
+    e->envp = env_copy(envp);
+    if (!env_get("SHELL", e->envp)) {
+            sprintf(envstr, "SHELL=%s", _PATH_BSHELL);
+            e->envp = env_set(e->envp, envstr);
+    }
+    /* home directory */
+    if (!env_get("HOME", e->envp)) {
+            sprintf(envstr, "HOME=%s", pw->pw_dir);
+            e->envp = env_set(e->envp, envstr);
+    }
+    /* path for searching for programs */
+    if (!env_get("PATH", e->envp)) {
+            sprintf(envstr, "PATH=%s", _PATH_DEFPATH);
+            e->envp = env_set(e->envp, envstr);
+    }
+    /* user name always from passwd */
+    sprintf(envstr, "%s=%s", "LOGNAME", pw->pw_name);
+    e->envp = env_set(e->envp, envstr);
+    #+end_src
+
+    The main loop works with the updated list of jobs.
+
+*** Main loop
+
+    The way the original cron from Version 7 Unix worked was very simple: in the loop it would
+    re-read the configuration, then it would run the current minute’s jobs as a superuser and
+    then it would go to sleep until the start of the next minute. But this simple approach on
+    old machines required too many resources.
+
+    An alternative version was offered in SysV whereby the daemon either went to sleep until
+    the next minute when there was a given task set or for a period of 30 minutes. Fewer
+    resources were required for re-reading the configuration and verifying the jobs in this
+    mode, but it became difficult to update the list of jobs quickly.
+
+    Vixie cron went back to verifying the lists of jobs once a minute; fortunately, by the end
+    of the 1980s there were far more resources available on standard Unix machines:
+
+    #+begin_src c
+    /* first-time loading of tasks */
+    load_database(&database);
+    /* run tasks set to be carried out after the system rebooted */
+    run_reboot_jobs(&database);
+    /* make TargetTime the start of the next minute */
+    cron_sync();
+    while (TRUE) {
+            /* carry out tasks, then go to sleep until the TargetTime adjusted to take into account the time spent on the tasks */
+            cron_sleep();
+
+            /* reread configuration */
+            load_database(&database);
+
+            /* collect tasks for given minute */
+            cron_tick(&database);
+
+            /* reset TargetTime to the start of the next minute */
+            TargetTime += 60;
+    }
+    #+end_src
+
+    The function which directly carries out the tasks is cron_sleep, which calls the
+    job_runqueue (sort through and run jobs) and do_command (launch each individual job)
+    functions. It is worth looking at the latter function in some more detail.
+
+*** Running a job
+
+    The do_command function has been implemented in good Unix style: that is to say, for
+    asynchronous job execution it does a fork. The parent process continues running jobs,
+    while the child process is busy preparing the job process:
+
+    #+begin_src c
+    switch (fork()) {
+    case -1:
+            /*could not execute fork */
+            break;
+    case 0:
+            /* child process: just in case let’s try to acquire the main lock again */
+            acquire_daemonlock(1);
+            /* move on to deriving the job process */
+            child_process(e, u);
+            /* once it has completed, the child process shuts down */
+            _exit(OK_EXIT);
+            break;
+    default:
+            /* parent process continues working */
+            break;
+    }
+    #+end_src
+
+    The child_process has quite a lot of logic: it assumes standard output streams and errors,
+    to then resend them to a mailbox (if the table of jobs specifies the environment variable,
+    MAILTO), and, finally, it waits for the main job process to complete.
+
+    The job process is derived by yet another fork:
+
+    #+begin_src c
+    switch (vfork()) {
+    case -1:
+            /* in the case of an error shuts down */
+            exit(ERROR_EXIT);
+    case 0:
+            /* grandchild process derives a new session, terminal etc.
+             */
+            (void) setsid();
+
+            /*
+             * followed by length configuration of process output – omitted for sake of brevity
+             */
+
+            /* change of directory, user and user group,
+             * in other words, no longer a superuser process
+             */
+            setgid(e->gid);
+            setuid(e->uid);
+            chdir(env_get("HOME", e->envp));
+
+            /* running the command itself
+             */
+            {
+                /* SHELL environment variable specifies run interpreter */
+                char        *shell = env_get("SHELL", e->envp);
+
+                /* process launches without sending parent process environment,
+                 * that is to say as described in the table of user jobs */
+                execle(shell, shell, "-c", e->cmd, (char *)0, e->envp);
+
+                /* error — and process has not launched? shuts down */
+                perror("execl");
+                _exit(ERROR_EXIT);
+            }
+            break;
+    default:
+            /* the process itself continues working; we wait for it to shut down and exit */
+            break;
+    }
+    #+end_src
+
+    That, basically, is everything about cron. I have omitted some interesting details, for
+    example, how records of remote users are kept, but the main points should be covered by
+    now.
+
+** Epilogue
+
+    Сron is a surprisingly simple and useful program, made in the best traditions of the Unix
+    world. It does nothing unnecessary and has been doing its work outstandingly over the
+    course of several decades. It took no more than an hour to familiarise myself with the
+    code of the version delivered along with Ubuntu – and I enjoyed it hugely. I hope you have
+    enjoyed my exploration of it as well
+
+    I don’t know about you, but I have found it quite sad to realise that programming today,
+    with its tendency to overcomplicate things and make things overly abstract, has been
+    averse to this sort of simplicity for a long time now.
+
+    There are lots of alternatives to cron available today: systemd-timers allows you to
+    organise complicated systems with dependencies, in fcron you can regulate how tasks use
+    resources, but personally I have always found the simplest crontabs to be perfectly
+    sufficient.
+
+    In a word, love Unix, use simple programs and don’t forget to read the manuals for your
+    platform!
